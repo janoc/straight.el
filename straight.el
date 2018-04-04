@@ -2401,6 +2401,13 @@ modify a package, before restarting Emacs."
           (const :tag "Never" never))
   :group 'straight)
 
+(defcustom straight-cache-autoloads nil
+  "Non-nil means read autoloads in bulk to speed up startup.
+The operation of this variable should be transparent to the user;
+no changes in configuration are necessary."
+  :group 'straight
+  :type 'boolean)
+
 ;;;;; Build cache
 
 (defvar straight--build-cache nil
@@ -2427,6 +2434,13 @@ generated at the end of an init from the keys of
 All packages built from these local repositories need to be
 rebuilt at the next init.")
 
+(defvar straight--autoloads-cache nil
+  "Hash table keeping track of autoloads extracted from packages, or nil.
+The keys are strings naming packages, and the values are cons
+cells. The car of each is a list of features that seem to be
+provided by the package, and the cdr is the autoloads provided by
+the package, as a list of forms to evaluate.")
+
 (defvar straight--build-cache-version :nan
   "The current version of the build cache format.
 When the format on disk changes, this value is changed, so that
@@ -2445,10 +2459,11 @@ This sets the variables `straight--build-cache',
 don't signal an error, but set these variables to empty
 values (all packages will be rebuilt, with no caching)."
   ;; Start by clearing the build cache. If the one on disk is
-  ;; malformed (or outdated), these values will be use.
+  ;; malformed (or outdated), these values will be used.
   (setq straight--build-cache (make-hash-table :test #'equal))
   (setq straight--eagerly-checked-packages nil)
   (setq straight--live-modified-repos nil)
+  (setq straight--autoloads-cache nil)
   (setq straight--build-cache-text nil)
   (ignore-errors
     (with-temp-buffer
