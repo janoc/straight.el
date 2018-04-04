@@ -3350,6 +3350,37 @@ package has already been built. This function calls
     ;; be seen, which is fine. (It's the way MELPA works.)
     (add-to-list 'Info-directory-list (straight--build-dir package))))
 
+(defun straight--load-package-autoloads (package)
+  "Load autoloads provided by PACKAGE, a string, from disk."
+  (let ((autoloads-file (straight--autoloads-file package)))
+    ;; NB: autoloads file may not exist if no autoloads were provided,
+    ;; in Emacs 26.
+    (when (file-exists-p autoloads-file)
+      (load autoloads-file nil 'nomessage))))
+
+(defun straight--read-package-autoloads (package)
+  "Read and return autoloads provided by PACKAGE, a string, from disk.
+The format is a list of Lisp forms to be evaluated."
+  (let ((autoloads-file (straight--autoloads-file package)))
+    (with-temp-buffer
+      (insert-file-contents-literally autoloads-file)
+      (let ((autoloads nil))
+        (condition-case _
+            (while t
+              (push (read (current-buffer)) autoloads))
+          (end-of-file))
+        (nreverse autoloads)))))
+
+(defun straight--read-package-features (package)
+  "Determine what features are provided by PACKAGE, a string.
+Inspect the build directory to find Emacs Lisp files that might
+be loadable via `require'."
+  (let ((files (straight--directory-files
+                (straight--build-dir package)
+                "^.+\\.el$")))
+    files))
+;; FIXME
+
 (defun straight--activate-package-autoloads (recipe)
   "Evaluate the autoloads for the package specified by RECIPE.
 This means that the functions with autoload cookies in the
@@ -3367,19 +3398,14 @@ global autoloads cache in order to speed up this process.
 RECIPE is a straight.el-style plist."
   (straight--with-plist recipe
       (package)
-    (let ((autoloads-file (straight--autoloads-file package)))
-      (if straight-disable-autoloads
-          ;; If the autoloads file doesn't exist, don't throw an
-          ;; error. It seems that in Emacs 26, an autoloads file is
-          ;; not actually written if there are no autoloads to
-          ;; generate (although this is unconfirmed), so this is
-          ;; especially important in that case.
-          (when (file-exists-p autoloads-file)
-            (load autoloads-file nil 'nomessage))
-        (unless (straight--checkhash package straight--autoloads-cache)
-          (with-temp-buffer
-            (insert-file-contents-literally autoloads-file)
-            ))))))
+    (if straight-disable-autoloads
+        (straight--load-package-autoloads package)
+      (unless (straight--checkhash package straight--autoloads-cache)
+        (let ((features (straight--read-package-features package))
+              (autoloads (straight--read-package-autoloads package)))
+          (puthash package (cons features autoloads)
+                   straight--autoloads-cache)))
+      (eval (cdr (gethash package straight--autoloads-cache))))))
 
 ;;;; Interactive helpers
 ;;;;; Package selection
