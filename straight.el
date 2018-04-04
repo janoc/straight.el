@@ -445,8 +445,8 @@ the straight/build/ directory itself."
 SEGMENTS are passed to `straight--file'."
   (apply #'straight--file "build" segments))
 
-(defun straight--autoload-file (package)
-  "Get the filename of the autoload file for PACKAGE.
+(defun straight--autoloads-file (package)
+  "Get the filename of the autoloads file for PACKAGE.
 PACKAGE should be a string."
   (straight--build-file package (format "%s-autoloads.el" package)))
 
@@ -2423,6 +2423,13 @@ package needs to be rebuilt.
 The value of this variable is persisted in the file
 build-cache.el.")
 
+(defvar straight--autoloads-cache nil
+  "Hash table keeping track of autoloads extracted from packages, or nil.
+The keys are strings naming packages, and the values are cons
+cells. The car of each is a list of features that seem to be
+provided by the package, and the cdr is the autoloads provided by
+the package, as a list of forms to evaluate.")
+
 (defvar straight--eagerly-checked-packages nil
   "List of packages that will be checked eagerly for modifications.
 This list is read from the build cache, and is originally
@@ -2434,14 +2441,7 @@ generated at the end of an init from the keys of
 All packages built from these local repositories need to be
 rebuilt at the next init.")
 
-(defvar straight--autoloads-cache nil
-  "Hash table keeping track of autoloads extracted from packages, or nil.
-The keys are strings naming packages, and the values are cons
-cells. The car of each is a list of features that seem to be
-provided by the package, and the cdr is the autoloads provided by
-the package, as a list of forms to evaluate.")
-
-(defvar straight--build-cache-version :nan
+(defvar straight--build-cache-version :chach
   "The current version of the build cache format.
 When the format on disk changes, this value is changed, so that
 straight.el knows to regenerate the whole cache.")
@@ -2461,9 +2461,9 @@ values (all packages will be rebuilt, with no caching)."
   ;; Start by clearing the build cache. If the one on disk is
   ;; malformed (or outdated), these values will be used.
   (setq straight--build-cache (make-hash-table :test #'equal))
+  (setq straight--autoloads-cache (make-hash-table :test #'equal))
   (setq straight--eagerly-checked-packages nil)
   (setq straight--live-modified-repos nil)
-  (setq straight--autoloads-cache nil)
   (setq straight--build-cache-text nil)
   (ignore-errors
     (with-temp-buffer
@@ -2473,7 +2473,8 @@ values (all packages will be rebuilt, with no caching)."
        (straight--build-cache-file))
       (let ((version (read (current-buffer)))
             (find-flavor (read (current-buffer)))
-            (cache (read (current-buffer)))
+            (build-cache (read (current-buffer)))
+            (autoloads-cache (read (current-buffer)))
             (eager-packages (read (current-buffer)))
             (use-symlinks (read (current-buffer)))
             (live-repos nil))
@@ -2504,8 +2505,11 @@ values (all packages will be rebuilt, with no caching)."
                  (symbolp find-flavor)
                  (eq find-flavor straight-find-flavor)
                  ;; Build cache should be a hash table.
-                 (hash-table-p cache)
-                 (eq (hash-table-test cache) #'equal)
+                 (hash-table-p build-cache)
+                 (eq (hash-table-test build-cache) #'equal)
+                 ;; Autoloads cache should also be a hash table.
+                 (hash-table-p autoloads-cache)
+                 (eq (hash-table-test autoloads-cache) #'equal)
                  ;; Eagerly checked packages should be a list of
                  ;; strings.
                  (listp eager-packages)
@@ -2517,7 +2521,8 @@ values (all packages will be rebuilt, with no caching)."
           ;; If anything is wrong, abort and use the default values.
           (error "Malformed or outdated build cache"))
         ;; Otherwise, we can load from disk.
-        (setq straight--build-cache cache)
+        (setq straight--build-cache build-cache)
+        (setq straight--autoloads-cache autoloads-cache)
         (setq straight--eagerly-checked-packages eager-packages)
         (setq straight--live-modified-repos live-repos)
         (setq straight--build-cache-text (buffer-string))))))
@@ -2543,6 +2548,8 @@ This uses the values of `straight--build-cache',
       (print straight-find-flavor (current-buffer))
       ;; The actual build cache.
       (print straight--build-cache (current-buffer))
+      ;; The autoloads cache.
+      (print straight--autoloads-cache (current-buffer))
       ;; Which packages should be checked eagerly next init.
       (print (hash-table-keys straight--profile-cache) (current-buffer))
       ;; Whether packages were built using symlinks or copying.
@@ -3110,7 +3117,7 @@ individual package recipe."
 (cl-defun straight--generate-package-autoloads (recipe)
   "Generate autoloads for the symlinked package specified by RECIPE.
 RECIPE should be a straight.el-style plist. See
-`straight--autoload-file-name'. Note that this function only
+`straight--autoloads-file-name'. Note that this function only
 modifies the build folder, not the original repository."
   (when (straight--plist-get recipe :no-autoloads straight-disable-autoloads)
     (cl-return-from straight--generate-package-autoloads))
@@ -3129,7 +3136,7 @@ modifies the build folder, not the original repository."
   (straight--with-plist recipe
       (package)
     (let (;; The full path to the autoload file.
-          (generated-autoload-file (straight--autoload-file package))
+          (generated-autoload-file (straight--autoloads-file package))
           ;; The following bindings are in
           ;; `package-generate-autoloads'. Presumably this is for a
           ;; good reason, so I just copied them here. It's a shame
@@ -3354,17 +3361,25 @@ global setting of `straight-disable-autoloads' or even because
 Emacs 26 seems to not generate an autoload file when there are no
 autoloads declared), then do nothing.
 
+If `straight-cache-autoloads' is non-nil, read and write from the
+global autoloads cache in order to speed up this process.
+
 RECIPE is a straight.el-style plist."
   (straight--with-plist recipe
       (package)
-    (let ((autoloads (straight--autoload-file package)))
-      ;; If the autoloads file doesn't exist, don't throw an error. It
-      ;; seems that in Emacs 26, an autoloads file is not actually
-      ;; written if there are no autoloads to generate (although this
-      ;; is unconfirmed), so this is especially important in that
-      ;; case.
-      (when (file-exists-p autoloads)
-        (load autoloads nil 'nomessage)))))
+    (let ((autoloads-file (straight--autoloads-file package)))
+      (if straight-disable-autoloads
+          ;; If the autoloads file doesn't exist, don't throw an
+          ;; error. It seems that in Emacs 26, an autoloads file is
+          ;; not actually written if there are no autoloads to
+          ;; generate (although this is unconfirmed), so this is
+          ;; especially important in that case.
+          (when (file-exists-p autoloads-file)
+            (load autoloads-file nil 'nomessage))
+        (unless (straight--checkhash package straight--autoloads-cache)
+          (with-temp-buffer
+            (insert-file-contents-literally autoloads-file)
+            ))))))
 
 ;;;; Interactive helpers
 ;;;;; Package selection
