@@ -3360,6 +3360,18 @@ package has already been built. This function calls
     (when (file-exists-p autoloads-file)
       (load autoloads-file nil 'nomessage))))
 
+(defun straight--read-package-features (package)
+  "Determine what features are provided by PACKAGE, a string.
+Inspect the build directory to find Emacs Lisp files that might
+be loadable via `require'."
+  (let ((files (straight--directory-files
+                (straight--build-dir package)
+                "^.+\\.el$")))
+    (mapcar
+     (lambda (fname)
+       (intern (substring fname 0 -3)))
+     files)))
+
 (defun straight--read-package-autoloads (package)
   "Read and return autoloads provided by PACKAGE, a string, from disk.
 The format is a list of Lisp forms to be evaluated."
@@ -3372,18 +3384,6 @@ The format is a list of Lisp forms to be evaluated."
               (push (read (current-buffer)) autoloads))
           (end-of-file))
         (nreverse autoloads)))))
-
-(defun straight--read-package-features (package)
-  "Determine what features are provided by PACKAGE, a string.
-Inspect the build directory to find Emacs Lisp files that might
-be loadable via `require'."
-  (let ((files (straight--directory-files
-                (straight--build-dir package)
-                "^.+\\.el$")))
-    (mapcar
-     (lambda (fname)
-       (intern (substring fname 0 -3)))
-     files)))
 
 (defun straight--activate-package-autoloads (recipe)
   "Evaluate the autoloads for the package specified by RECIPE.
