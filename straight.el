@@ -3249,6 +3249,8 @@ RECIPE should be a straight.el-style plist. The build mtime and
 recipe in `straight--build-cache' for the package are updated."
   (straight--with-plist recipe
       (package local-repo)
+    ;; We've rebuilt the package, so its autoloads might have changed.
+    (remhash package straight--autoloads-cache)
     (let (;; This time format is compatible with:
           ;;
           ;; * BSD find shipped with macOS >=10.11
@@ -3378,8 +3380,10 @@ be loadable via `require'."
   (let ((files (straight--directory-files
                 (straight--build-dir package)
                 "^.+\\.el$")))
-    files))
-;; FIXME
+    (mapcar
+     (lambda (fname)
+       (intern (substring fname 0 -3)))
+     files)))
 
 (defun straight--activate-package-autoloads (recipe)
   "Evaluate the autoloads for the package specified by RECIPE.
@@ -3405,6 +3409,7 @@ RECIPE is a straight.el-style plist."
               (autoloads (straight--read-package-autoloads package)))
           (puthash package (cons features autoloads)
                    straight--autoloads-cache)))
+      ;; car is the feature list, cdr is the autoloads.
       (eval (cdr (gethash package straight--autoloads-cache))))))
 
 ;;;; Interactive helpers
