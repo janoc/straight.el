@@ -3376,14 +3376,17 @@ be loadable via `require'."
   "Read and return autoloads provided by PACKAGE, a string, from disk.
 The format is a list of Lisp forms to be evaluated."
   (let ((autoloads-file (straight--autoloads-file package)))
-    (with-temp-buffer
-      (insert-file-contents-literally autoloads-file)
-      (let ((autoloads nil))
-        (condition-case _
-            (while t
-              (push (read (current-buffer)) autoloads))
-          (end-of-file))
-        (nreverse autoloads)))))
+    ;; NB: autoloads file may not exist if no autoloads were provided,
+    ;; in Emacs 26.
+    (when (file-exists-p autoloads-file)
+      (with-temp-buffer
+        (insert-file-contents-literally autoloads-file)
+        (let ((autoloads nil))
+          (condition-case _
+              (while t
+                (push (read (current-buffer)) autoloads))
+            (end-of-file))
+          (nreverse autoloads))))))
 
 (defun straight--activate-package-autoloads (recipe)
   "Evaluate the autoloads for the package specified by RECIPE.
@@ -3402,15 +3405,20 @@ global autoloads cache in order to speed up this process.
 RECIPE is a straight.el-style plist."
   (straight--with-plist recipe
       (package)
-    (if straight-disable-autoloads
-        (straight--load-package-autoloads package)
-      (unless (straight--checkhash package straight--autoloads-cache)
-        (let ((features (straight--read-package-features package))
-              (autoloads (straight--read-package-autoloads package)))
-          (puthash package (cons features autoloads)
-                   straight--autoloads-cache)))
-      ;; car is the feature list, cdr is the autoloads.
-      (eval (cdr (gethash package straight--autoloads-cache))))))
+    (if straight-cache-autoloads
+        (progn
+          (unless (straight--checkhash package straight--autoloads-cache)
+            (let ((features (straight--read-package-features package))
+                  (autoloads (straight--read-package-autoloads package)))
+              (puthash package (cons features autoloads)
+                       straight--autoloads-cache)))
+          ;; Some autoloads files expect to be loaded normally, rather
+          ;; than read and evaluated separately. Fool them.
+          (let ((load-file-name (straight--autoloads-file package)))
+            ;; car is the feature list, cdr is the autoloads.
+            (dolist (form (cdr (gethash package straight--autoloads-cache)))
+              (eval form))))
+      (straight--load-package-autoloads package))))
 
 ;;;; Interactive helpers
 ;;;;; Package selection
